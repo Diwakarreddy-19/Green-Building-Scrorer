@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: green-building-scorer
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    autoDeploy: true
