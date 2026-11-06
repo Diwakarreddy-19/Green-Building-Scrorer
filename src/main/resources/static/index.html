@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Green Building Certification Scorer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <div class="brand-icon">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                        <path d="M9 12l2 2 4-4" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">GreenScore</h1>
+                    <p class="brand-subtitle">Green Building Certification Readiness Engine (Problem Statement 89)</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button type="button" class="btn btn-outline" id="loadSampleBtn" title="Pre-fill with compliant sample building data">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                        <polyline points="10 9 9 9 8 9" />
+                    </svg>
+                    Load Sample Data
+                </button>
+                <button type="button" class="btn btn-ghost" id="resetBtn" title="Reset all inputs">
+                    Reset
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+
+        <!-- Stepper Wizard Progress Indicator -->
+        <nav class="stepper-nav no-print" aria-label="Assessment Progress">
+            <ol class="stepper-list">
+                <li class="step-item active" data-step="1">
+                    <div class="step-circle">1</div>
+                    <div class="step-label">Building Info</div>
+                </li>
+                <li class="step-item" data-step="2">
+                    <div class="step-circle">2</div>
+                    <div class="step-label">Energy</div>
+                </li>
+                <li class="step-item" data-step="3">
+                    <div class="step-circle">3</div>
+                    <div class="step-label">Water</div>
+                </li>
+                <li class="step-item" data-step="4">
+                    <div class="step-circle">4</div>
+                    <div class="step-label">Materials</div>
+                </li>
+                <li class="step-item" data-step="5">
+                    <div class="step-circle">5</div>
+                    <div class="step-label">Waste</div>
+                </li>
+                <li class="step-item" data-step="6">
+                    <div class="step-circle">6</div>
+                    <div class="step-label">Results</div>
+                </li>
+            </ol>
+            <div class="stepper-progress-track">
+                <div class="stepper-progress-bar" id="stepperProgressBar" style="width: 16.6%;"></div>
+            </div>
+        </nav>
+
+        <!-- Form Step Card -->
+        <div class="wizard-card">
+
+            <!-- Step Error Banner -->
+            <div id="stepErrorBanner" class="alert alert-error" style="display: none;"></div>
+
+            <!-- STEP 1: Building Details -->
+            <section id="step-1" class="wizard-step active">
+                <div class="step-header">
+                    <h2>Step 1: Building Details & Certification Standard</h2>
+                    <p class="step-desc">Specify building typology and select the target rating framework for weighted criteria evaluation.</p>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label for="buildingNameInput" class="form-label required">Building / Project Name</label>
+                        <input type="text" id="buildingNameInput" class="form-input" placeholder="e.g. EcoTower Horizon Campus" required>
+                        <span class="field-hint">Official project title for certification reporting.</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="buildingTypeSelect" class="form-label required">Building Typology</label>
+                        <select id="buildingTypeSelect" class="form-select">
+                            <option value="OFFICE" selected>Commercial Office (Benchmark: 140 kWh/m²/yr)</option>
+                            <option value="RESIDENTIAL">Residential Complex (Benchmark: 50 kWh/m²/yr)</option>
+                            <option value="COMMERCIAL">Retail & Shopping Mall (Benchmark: 200 kWh/m²/yr)</option>
+                            <option value="INSTITUTIONAL">Educational & Institutional (Benchmark: 90 kWh/m²/yr)</option>
+                            <option value="HEALTHCARE">Hospital & Healthcare (Benchmark: 250 kWh/m²/yr)</option>
+                        </select>
+                        <span class="field-hint">Determines baseline Energy Performance Index (EPI) benchmark.</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label required">Rating Standard</label>
+                        <div class="radio-card-group">
+                            <label class="radio-card active">
+                                <input type="radio" name="standardChoice" value="GRIHA" checked>
+                                <div class="radio-card-content">
+                                    <div class="radio-title">GRIHA</div>
+                                    <div class="radio-sub">National Rating System</div>
+                                    <div class="radio-weights">Energy 30 • Water 25 • Mat 25 • Waste 20</div>
+                                </div>
+                            </label>
+                            <label class="radio-card">
+                                <input type="radio" name="standardChoice" value="IGBC">
+                                <div class="radio-card-content">
+                                    <div class="radio-title">IGBC</div>
+                                    <div class="radio-sub">CII Green Building Council</div>
+                                    <div class="radio-weights">Energy 26 • Water 28 • Mat 28 • Waste 18</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-callout" id="standardInfoCallout">
+                    <div class="callout-title">GRIHA Standard Overview</div>
+                    <p class="callout-body">India's national rating system for green buildings, emphasizing lifecycle environmental impact, energy efficiency, and thermal comfort.</p>
+                </div>
+            </section>
+
+            <!-- STEP 2: Energy Efficiency -->
+            <section id="step-2" class="wizard-step">
+                <div class="step-header">
+                    <div class="step-badge" id="energyWeightBadge">Weight: 30 Points</div>
+                    <h2>Step 2: Energy Efficiency</h2>
+                    <p class="step-desc">Evaluates Energy Performance Index (EPI), on-site renewable energy integration, lighting efficacy, and HVAC passive design.</p>
+                </div>
+
+                <!-- Live Category Tracker Banner -->
+                <div class="live-category-banner" id="liveEnergyBanner">
+                    <div class="live-banner-left">
+                        <span class="live-cat-icon">⚡</span>
+                        <div>
+                            <div class="live-banner-title">Energy Efficiency Live Tracker</div>
+                            <div class="live-banner-stats" id="energyLiveStats">Current: 0.0 / 30.0 pts (0%) • Improvement Potential: +30.0 pts</div>
+                        </div>
+                    </div>
+                    <div class="live-banner-tip" id="energyLiveTip">💡 Adjust criteria below to preview live scoring & improvement potential.</div>
+                </div>
+
+                <div id="energyCriteriaContainer" class="criteria-list">
+                    <!-- Dynamically populated from /api/criteria -->
+                </div>
+            </section>
+
+            <!-- STEP 3: Water Conservation -->
+            <section id="step-3" class="wizard-step">
+                <div class="step-header">
+                    <div class="step-badge" id="waterWeightBadge">Weight: 25 Points</div>
+                    <h2>Step 3: Water Conservation</h2>
+                    <p class="step-desc">Assesses rainwater harvesting infrastructure, low-flow plumbing fixtures, wastewater treatment & reuse, and xeriscaping.</p>
+                </div>
+
+                <!-- Live Category Tracker Banner -->
+                <div class="live-category-banner" id="liveWaterBanner">
+                    <div class="live-banner-left">
+                        <span class="live-cat-icon">💧</span>
+                        <div>
+                            <div class="live-banner-title">Water Conservation Live Tracker</div>
+                            <div class="live-banner-stats" id="waterLiveStats">Current: 0.0 / 25.0 pts (0%) • Improvement Potential: +25.0 pts</div>
+                        </div>
+                    </div>
+                    <div class="live-banner-tip" id="waterLiveTip">💡 Adjust criteria below to preview live scoring & improvement potential.</div>
+                </div>
+
+                <div id="waterCriteriaContainer" class="criteria-list">
+                    <!-- Dynamically populated from /api/criteria -->
+                </div>
+            </section>
+
+            <!-- STEP 4: Sustainable Materials -->
+            <section id="step-4" class="wizard-step">
+                <div class="step-header">
+                    <div class="step-badge" id="materialsWeightBadge">Weight: 25 Points</div>
+                    <h2>Step 4: Sustainable Materials</h2>
+                    <p class="step-desc">Examines recycled-content usage, regional sourcing within 500 km, low-VOC interior coatings, and blended cement/sustainable timber.</p>
+                </div>
+
+                <!-- Live Category Tracker Banner -->
+                <div class="live-category-banner" id="liveMaterialsBanner">
+                    <div class="live-banner-left">
+                        <span class="live-cat-icon">🧱</span>
+                        <div>
+                            <div class="live-banner-title">Sustainable Materials Live Tracker</div>
+                            <div class="live-banner-stats" id="materialsLiveStats">Current: 0.0 / 25.0 pts (0%) • Improvement Potential: +25.0 pts</div>
+                        </div>
+                    </div>
+                    <div class="live-banner-tip" id="materialsLiveTip">💡 Adjust criteria below to preview live scoring & improvement potential.</div>
+                </div>
+
+                <div id="materialsCriteriaContainer" class="criteria-list">
+                    <!-- Dynamically populated from /api/criteria -->
+                </div>
+            </section>
+
+            <!-- STEP 5: Waste Management -->
+            <section id="step-5" class="wizard-step">
+                <div class="step-header">
+                    <div class="step-badge" id="wasteWeightBadge">Weight: 20 Points</div>
+                    <h2>Step 5: Waste Management</h2>
+                    <p class="step-desc">Measures construction debris diversion from landfills, on-site organic composting, multi-stream segregation, and e-waste handling.</p>
+                </div>
+
+                <!-- Live Category Tracker Banner -->
+                <div class="live-category-banner" id="liveWasteBanner">
+                    <div class="live-banner-left">
+                        <span class="live-cat-icon">♻️</span>
+                        <div>
+                            <div class="live-banner-title">Waste Management Live Tracker</div>
+                            <div class="live-banner-stats" id="wasteLiveStats">Current: 0.0 / 20.0 pts (0%) • Improvement Potential: +20.0 pts</div>
+                        </div>
+                    </div>
+                    <div class="live-banner-tip" id="wasteLiveTip">💡 Adjust criteria below to preview live scoring & improvement potential.</div>
+                </div>
+
+                <div id="wasteCriteriaContainer" class="criteria-list">
+                    <!-- Dynamically populated from /api/criteria -->
+                </div>
+            </section>
+
+            <!-- STEP 6: Results & Certification Readiness Report -->
+            <section id="step-6" class="wizard-step">
+                <div class="results-header">
+                    <div>
+                        <h2>Certification Readiness Assessment</h2>
+                        <p class="step-desc" id="reportSubtitle">Report generated based on selected sustainability framework.</p>
+                    </div>
+                    <div class="results-actions no-print">
+                        <button type="button" class="btn btn-secondary" id="printReportBtn">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 6 2 18 2 18 9" />
+                                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                                <rect x="6" y="14" width="12" height="8" />
+                            </svg>
+                            Print / Save PDF
+                        </button>
+                        <button type="button" class="btn btn-primary" id="evaluateAnotherBtn">
+                            Evaluate Another Building
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Banner: Readiness Status -->
+                <div id="readinessBanner" class="readiness-banner ready">
+                    <div class="readiness-icon-box" id="readinessIconBox">
+                        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                            <polyline points="22 4 12 14.01 9 11.01" />
+                        </svg>
+                    </div>
+                    <div class="readiness-text-box">
+                        <div class="readiness-title" id="readinessTitle">Certification Ready</div>
+                        <div class="readiness-desc" id="readinessDesc">The building satisfies the minimum certification threshold of 60.0 points.</div>
+                    </div>
+                    <div class="rating-band-tag" id="ratingBandTag">5 Star (GRIHA)</div>
+                </div>
+
+                <!-- Top Score Overview Grid -->
+                <div class="score-overview-grid">
+                    <!-- Score Gauge -->
+                    <div class="overview-card score-gauge-card">
+                        <div class="card-subtitle">Aggregate Certification Score</div>
+                        <div class="gauge-container" id="gaugeContainer">
+                            <!-- Inline SVG Gauge generated by app.js -->
+                        </div>
+                        <div class="gauge-caption">Total Points: <strong id="gaugePointsDisplay">0.0</strong> / 100.0</div>
+                        <div class="threshold-note">Readiness Threshold: ≥ 60.0 Points</div>
+                    </div>
+
+                    <!-- Project Metadata Card -->
+                    <div class="overview-card meta-summary-card">
+                        <div class="card-subtitle">Project & Standard Context</div>
+                        <dl class="meta-definition-list">
+                            <div class="meta-row">
+                                <dt>Project Name</dt>
+                                <dd id="summaryProjectName">-</dd>
+                            </div>
+                            <div class="meta-row">
+                                <dt>Typology</dt>
+                                <dd id="summaryBuildingType">-</dd>
+                            </div>
+                            <div class="meta-row">
+                                <dt>Standard Applied</dt>
+                                <dd id="summaryStandardName">-</dd>
+                            </div>
+                            <div class="meta-row">
+                                <dt>Rating Level</dt>
+                                <dd id="summaryRatingLevel">-</dd>
+                            </div>
+                            <div class="meta-row">
+                                <dt>Assessment Date</dt>
+                                <dd id="summaryTimestamp">-</dd>
+                            </div>
+                        </dl>
+                        <div class="disclaimer-callout" id="standardDisclaimerText">
+                            * Rating band and criteria are illustrative, not official.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Score Performance Bars -->
+                <div class="card-section">
+                    <h3 class="section-title">Performance by Sustainability Category</h3>
+                    <p class="section-subtitle">Weighted score contributions from Energy, Water, Materials, and Waste.</p>
+                    <div class="category-bars-container" id="categoryBarsContainer">
+                        <!-- Category progress bars generated by app.js -->
+                    </div>
+                </div>
+
+                <!-- Category Improvement Insights & Deficit Analysis (Energy, Water, Materials, Waste) -->
+                <div class="card-section">
+                    <div class="section-header-row">
+                        <div>
+                            <h3 class="section-title">Category Improvement Insights & Deficit Analysis</h3>
+                            <p class="section-subtitle">Detailed breakdown of user-submitted data, points scored, remaining deficit, and category-specific actions for Energy, Water, Materials, and Waste.</p>
+                        </div>
+                    </div>
+                    <div class="category-improvement-grid" id="categoryImprovementGrid">
+                        <!-- Dynamic Category Improvement Cards populated by app.js -->
+                    </div>
+                </div>
+
+                <!-- Prioritized Actionable Recommendations with Category Filter Tabs -->
+                <div class="card-section">
+                    <div class="section-header-row">
+                        <div>
+                            <h3 class="section-title">Prioritized Actionable Optimization Plan</h3>
+                            <p class="section-subtitle">Filter improvement recommendations by category to focus on specific sustainability interventions.</p>
+                        </div>
+                    </div>
+
+                    <!-- Category Filter Tabs -->
+                    <div class="category-tabs no-print" id="categoryFilterTabs">
+                        <button type="button" class="cat-tab active" data-cat="ALL">All Categories (<span id="countAll">0</span>)</button>
+                        <button type="button" class="cat-tab" data-cat="ENERGY">⚡ Energy (<span id="countEnergy">0</span>)</button>
+                        <button type="button" class="cat-tab" data-cat="WATER">💧 Water (<span id="countWater">0</span>)</button>
+                        <button type="button" class="cat-tab" data-cat="MATERIALS">🧱 Materials (<span id="countMaterials">0</span>)</button>
+                        <button type="button" class="cat-tab" data-cat="WASTE">♻️ Waste (<span id="countWaste">0</span>)</button>
+                    </div>
+
+                    <div class="suggestions-list" id="suggestionsList">
+                        <!-- Suggestions populated by app.js -->
+                    </div>
+                </div>
+
+                <!-- Criteria Detail Table -->
+                <div class="card-section">
+                    <h3 class="section-title">Criteria Evaluation Breakdown</h3>
+                    <p class="section-subtitle">Full audit table with user inputs, compliance percentages, and point outcomes.</p>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Criterion</th>
+                                    <th>Category</th>
+                                    <th>Max Pts</th>
+                                    <th>User Input Value</th>
+                                    <th>Earned Pts</th>
+                                    <th>Deficit (Gap)</th>
+                                    <th>Compliance</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="criteriaTableBody">
+                                <!-- Table rows populated by app.js -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Navigation Controls (Back / Next / Submit) -->
+            <footer class="wizard-footer no-print" id="wizardFooter">
+                <button type="button" class="btn btn-outline" id="prevStepBtn" disabled>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    Back
+                </button>
+                <div class="footer-step-indicator">
+                    Step <span id="currentStepNumber">1</span> of 5
+                </div>
+                <button type="button" class="btn btn-primary" id="nextStepBtn">
+                    Next
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                </button>
+            </footer>
+
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer no-print">
+        <p>GreenScore • Green Building Certification Scorer • Built with Spring Boot 3 & Modern Object-Oriented Architecture</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
