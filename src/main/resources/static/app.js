@@ -202,8 +202,9 @@
     /**
      * Fetch criteria metadata from /api/criteria
      */
-    async function loadCriteria() {
+    async function loadCriteria(retryCount = 0) {
         try {
+            clearError();
             const url = `/api/criteria?standard=${encodeURIComponent(state.selectedStandard)}&buildingType=${encodeURIComponent(state.selectedBuildingType)}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error('Failed to fetch criteria configuration');
@@ -211,7 +212,11 @@
             renderAllCriteria();
             updateAllLiveTrackers();
         } catch (err) {
-            showError('Error loading criteria: ' + err.message);
+            if (retryCount < 2) {
+                setTimeout(() => loadCriteria(retryCount + 1), 1200);
+            } else {
+                showError('Error loading criteria: ' + err.message, () => loadCriteria(0));
+            }
         }
     }
 
@@ -918,8 +923,29 @@
     /**
      * Display Validation Error
      */
-    function showError(msg) {
-        elements.stepErrorBanner.textContent = msg;
+    function showError(msg, retryCallback = null) {
+        elements.stepErrorBanner.innerHTML = '';
+        const msgSpan = document.createElement('span');
+        msgSpan.textContent = msg;
+        elements.stepErrorBanner.appendChild(msgSpan);
+        if (retryCallback) {
+            const retryBtn = document.createElement('button');
+            retryBtn.textContent = ' 🔄 Retry';
+            retryBtn.style.marginLeft = '12px';
+            retryBtn.style.padding = '3px 10px';
+            retryBtn.style.cursor = 'pointer';
+            retryBtn.style.border = '1px solid #c53030';
+            retryBtn.style.borderRadius = '4px';
+            retryBtn.style.backgroundColor = '#fff';
+            retryBtn.style.color = '#c53030';
+            retryBtn.style.fontWeight = 'bold';
+            retryBtn.onclick = (e) => {
+                e.preventDefault();
+                clearError();
+                retryCallback();
+            };
+            elements.stepErrorBanner.appendChild(retryBtn);
+        }
         elements.stepErrorBanner.style.display = 'block';
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
