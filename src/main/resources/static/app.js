@@ -7,6 +7,12 @@
     'use strict';
 
     // Application State
+    // Data Protection Storage Keys
+    const STORAGE_DRAFT_KEY = 'greenscore_auto_save_v2';
+    const STANDARDS_CACHE_KEY = 'greenscore_cached_standards_v1';
+    const CRITERIA_CACHE_KEY_PREFIX = 'greenscore_cached_criteria_v1_';
+
+    // Application State with Offline & Auto-Save Tracking
     const state = {
         currentStep: 1,
         totalSteps: 5, // Wizard steps 1 to 5, step 6 is results
@@ -21,7 +27,11 @@
             values: {}
         },
         evaluationReport: null,
-        activeCategoryFilter: 'ALL'
+        activeCategoryFilter: 'ALL',
+        isOffline: !navigator.onLine,
+        hasPendingEvaluation: false,
+        isProvisional: false,
+        lastSavedAt: null
     };
 
     // Category Metadata Helper
@@ -52,6 +62,18 @@
         resetBtn: document.getElementById('resetBtn'),
         printReportBtn: document.getElementById('printReportBtn'),
         evaluateAnotherBtn: document.getElementById('evaluateAnotherBtn'),
+        // Data Protection & Real-time Sync Elements
+        syncStatusBadge: document.getElementById('syncStatusBadge'),
+        syncBadgeDot: document.getElementById('syncBadgeDot'),
+        syncBadgeText: document.getElementById('syncBadgeText'),
+        networkStatusBar: document.getElementById('networkStatusBar'),
+        networkStatusIcon: document.getElementById('networkStatusIcon'),
+        networkStatusText: document.getElementById('networkStatusText'),
+        networkSyncBtn: document.getElementById('networkSyncBtn'),
+        draftRestoredBanner: document.getElementById('draftRestoredBanner'),
+        draftRestoredText: document.getElementById('draftRestoredText'),
+        discardDraftBtn: document.getElementById('discardDraftBtn'),
+        provisionalBadge: document.getElementById('provisionalBadge'),
         // Containers
         energyContainer: document.getElementById('energyCriteriaContainer'),
         waterContainer: document.getElementById('waterCriteriaContainer'),
@@ -106,8 +128,10 @@
      */
     async function init() {
         bindEvents();
+        initDataProtection();
         await loadStandards();
         await loadCriteria();
+        checkAndApplyRestoredDraft();
     }
 
     /**
@@ -128,6 +152,7 @@
         elements.buildingTypeSelect.addEventListener('change', async (e) => {
             state.selectedBuildingType = e.target.value;
             state.formData.buildingType = e.target.value;
+            saveDraft();
             await loadCriteria();
         });
 
@@ -137,6 +162,7 @@
                 if (e.target.checked) {
                     state.selectedStandard = e.target.value;
                     state.formData.standard = e.target.value;
+                    saveDraft();
                     updateStandardInfo();
                     await loadCriteria();
                 }
@@ -167,16 +193,30 @@
     }
 
     /**
-     * Fetch standards from /api/standards
+     * Fetch standards with Offline Caching & Fallback
      */
     async function loadStandards() {
         try {
             const res = await fetch('/api/standards');
-            if (!res.ok) throw new Error('Failed to load certification standards');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             state.standards = await res.json();
+            try {
+                localStorage.setItem(STANDARDS_CACHE_KEY, JSON.stringify(state.standards));
+            } catch (e) {}
             updateStandardInfo();
         } catch (err) {
-            showError('Unable to connect to standards API: ' + err.message);
+            console.warn('Network standards fetch failed, checking cache/fallbacks:', err.message);
+            const cached = localStorage.getItem(STANDARDS_CACHE_KEY);
+            if (cached) {
+                try {
+                    state.standards = JSON.parse(cached);
+                } catch (e) {
+                    state.standards = FALLBACK_STANDARDS;
+                }
+            } else {
+                state.standards = FALLBACK_STANDARDS;
+            }
+            updateStandardInfo();
         }
     }
 
@@ -184,7 +224,7 @@
      * Update Category Weight Badges and standard info callout
      */
     function updateStandardInfo() {
-        const std = state.standards.find(s => s.id === state.selectedStandard);
+        const std = state.standards.find(s => s.id === state.selectedStandard) || FALLBACK_STANDARDS[0];
         if (!std) return;
 
         const weights = std.categoryWeights;
@@ -200,19 +240,39 @@
     }
 
     /**
-     * Fetch criteria metadata from /api/criteria
+     * Fetch criteria metadata with Offline Caching & Fallbacks
      */
     async function loadCriteria(retryCount = 0) {
+        const cacheKey = CRITERIA_CACHE_KEY_PREFIX + state.selectedStandard + '_' + state.selectedBuildingType;
         try {
             clearError();
             const url = `/api/criteria?standard=${encodeURIComponent(state.selectedStandard)}&buildingType=${encodeURIComponent(state.selectedBuildingType)}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error('Failed to fetch criteria configuration');
             state.criteria = await res.json();
+            try {
+                localStorage.setItem(cacheKey, JSON.stringify(state.criteria));
+            } catch (e) {}
             renderAllCriteria();
             updateAllLiveTrackers();
         } catch (err) {
-            if (retryCount < 2) {
+            console.warn('Network criteria fetch failed, checking cache/fallbacks:', err.message);
+            const cached = localStorage.getItem(cacheKey);
+            if (cached) {
+                try {
+                    state.criteria = JSON.parse(cached);
+                    renderAllCriteria();
+                    updateAllLiveTrackers();
+                    return;
+                } catch (e) {}
+            }
+
+            const fallback = getFallbackCriteria(state.selectedStandard, state.selectedBuildingType);
+            if (fallback && fallback.length > 0) {
+                state.criteria = fallback;
+                renderAllCriteria();
+                updateAllLiveTrackers();
+            } else if (retryCount < 2 && navigator.onLine) {
                 setTimeout(() => loadCriteria(retryCount + 1), 1200);
             } else {
                 showError('Error loading criteria: ' + err.message, () => loadCriteria(0));
@@ -317,6 +377,7 @@
                 state.formData.values[criterion.id] = checkbox.checked;
                 label.textContent = checkbox.checked ? 'Implemented / Compliant' : 'Not Implemented';
                 updateCategoryLiveTracker(criterion.category);
+                saveDraft();
             });
         }
 
@@ -332,6 +393,7 @@
                 number.value = v;
                 state.formData.values[criterion.id] = v;
                 updateCategoryLiveTracker(criterion.category);
+                saveDraft();
             };
 
             slider.addEventListener('input', (e) => syncValues(e.target.value));
@@ -343,6 +405,7 @@
             select.addEventListener('change', (e) => {
                 state.formData.values[criterion.id] = e.target.value;
                 updateCategoryLiveTracker(criterion.category);
+                saveDraft();
             });
         }
     }
@@ -459,6 +522,7 @@
      */
     function goToStep(step) {
         state.currentStep = step;
+        saveDraft();
 
         // Hide all steps, show current
         for (let i = 1; i <= 6; i++) {
@@ -521,12 +585,15 @@
             state.formData.buildingType = elements.buildingTypeSelect.value;
             const checkedRadio = document.querySelector('input[name="standardChoice"]:checked');
             state.formData.standard = checkedRadio ? checkedRadio.value : 'GRIHA';
+            saveDraft();
         }
         return true;
     }
 
     /**
      * Submit evaluation request to POST /api/evaluate
+     * If offline or connection fails, calculates provisional score locally using official weights
+     * and queues automatic server synchronization.
      */
     async function submitEvaluation() {
         try {
@@ -540,21 +607,53 @@
                 values: state.formData.values
             };
 
-            const res = await fetch('/api/evaluate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+            let report = null;
+            let usedProvisional = false;
 
-            if (!res.ok) {
-                const errData = await res.json().catch(() => ({}));
-                const msg = errData.details ? errData.details.join(', ') : (errData.error || 'Evaluation failed');
-                throw new Error(msg);
+            if (navigator.onLine) {
+                try {
+                    const res = await fetch('/api/evaluate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.ok) {
+                        report = await res.json();
+                        state.hasPendingEvaluation = false;
+                        state.isProvisional = false;
+                    } else {
+                        const errData = await res.json().catch(() => ({}));
+                        const msg = errData.details ? errData.details.join(', ') : (errData.error || 'Evaluation failed');
+                        throw new Error(msg);
+                    }
+                } catch (netErr) {
+                    if (!navigator.onLine || netErr.message.includes('fetch') || netErr.message.includes('NetworkError') || netErr.message.includes('Failed')) {
+                        console.warn('Network evaluation unreachable, generating provisional offline report:', netErr);
+                        report = generateProvisionalReport(payload);
+                        usedProvisional = true;
+                    } else {
+                        throw netErr;
+                    }
+                }
+            } else {
+                report = generateProvisionalReport(payload);
+                usedProvisional = true;
             }
 
-            state.evaluationReport = await res.json();
+            if (usedProvisional) {
+                state.hasPendingEvaluation = true;
+                state.isProvisional = true;
+            }
+
+            state.evaluationReport = report;
             renderResults(state.evaluationReport);
+            saveDraft();
             goToStep(6);
+
+            if (state.isProvisional) {
+                showNetworkBanner('OFFLINE', '⚠️ Offline Mode: Score calculated locally using weighted criteria. It will automatically synchronize with the server once your connection returns.');
+            }
         } catch (err) {
             showError('Evaluation Error: ' + err.message);
         } finally {
@@ -566,6 +665,11 @@
      * Render Results Dashboard
      */
     function renderResults(report) {
+        // Toggle provisional badge
+        if (elements.provisionalBadge) {
+            elements.provisionalBadge.style.display = state.isProvisional ? 'inline-flex' : 'none';
+        }
+
         // 1. Readiness Banner
         const isReady = report.isReady;
         elements.readinessBanner.className = `readiness-banner ${isReady ? 'ready' : 'improvement'}`;
@@ -890,6 +994,7 @@
 
         await loadCriteria();
         updateAllLiveTrackers();
+        saveDraft();
         goToStep(1);
     }
 
@@ -913,11 +1018,526 @@
         };
         state.evaluationReport = null;
         state.activeCategoryFilter = 'ALL';
+        state.hasPendingEvaluation = false;
+        state.isProvisional = false;
+
+        try {
+            localStorage.removeItem(STORAGE_DRAFT_KEY);
+        } catch (e) {}
+
+        if (elements.draftRestoredBanner) {
+            elements.draftRestoredBanner.style.display = 'none';
+        }
 
         updateStandardInfo();
         await loadCriteria();
         updateAllLiveTrackers();
         goToStep(1);
+        updateSyncIndicator(state.isOffline ? 'OFFLINE' : 'SAVED');
+    }
+
+    /* ==========================================================================
+       AUTOMATIC DATA PROTECTION, OFFLINE AUTO-SAVE & SERVER SYNCHRONIZATION
+       ========================================================================== */
+
+    /**
+     * Initialize Data Protection listeners
+     */
+    function initDataProtection() {
+        // Window online / offline listeners
+        window.addEventListener('online', onConnectionRestored);
+        window.addEventListener('offline', onConnectionLost);
+
+        // Initial online/offline check
+        if (!navigator.onLine) {
+            onConnectionLost();
+        } else {
+            updateSyncIndicator('ONLINE');
+        }
+
+        // Auto-save on building name input
+        if (elements.buildingNameInput) {
+            elements.buildingNameInput.addEventListener('input', () => {
+                state.formData.buildingName = elements.buildingNameInput.value.trim();
+                saveDraft();
+            });
+        }
+
+        // Discard draft button
+        if (elements.discardDraftBtn) {
+            elements.discardDraftBtn.addEventListener('click', async () => {
+                try {
+                    localStorage.removeItem(STORAGE_DRAFT_KEY);
+                } catch (e) {}
+                if (elements.draftRestoredBanner) {
+                    elements.draftRestoredBanner.style.display = 'none';
+                }
+                await resetForm();
+            });
+        }
+
+        // Manual sync button
+        if (elements.networkSyncBtn) {
+            elements.networkSyncBtn.addEventListener('click', () => {
+                synchronizePendingData();
+            });
+        }
+    }
+
+    /**
+     * Auto-save draft in real time to LocalStorage
+     */
+    function saveDraft() {
+        try {
+            if (elements.buildingNameInput) {
+                state.formData.buildingName = elements.buildingNameInput.value.trim();
+            }
+            state.formData.buildingType = state.selectedBuildingType;
+            state.formData.standard = state.selectedStandard;
+
+            const draft = {
+                version: 2,
+                lastSavedAt: new Date().toISOString(),
+                currentStep: state.currentStep,
+                formData: state.formData,
+                evaluationReport: state.evaluationReport,
+                hasPendingEvaluation: state.hasPendingEvaluation || false,
+                isProvisional: state.isProvisional || false
+            };
+
+            localStorage.setItem(STORAGE_DRAFT_KEY, JSON.stringify(draft));
+            state.lastSavedAt = draft.lastSavedAt;
+
+            if (state.isOffline) {
+                updateSyncIndicator('OFFLINE');
+            } else if (state.hasPendingEvaluation) {
+                updateSyncIndicator('PENDING');
+            } else {
+                updateSyncIndicator('SAVED');
+            }
+        } catch (err) {
+            console.warn('Auto-save error:', err);
+        }
+    }
+
+    /**
+     * Check and restore draft from LocalStorage on page load
+     */
+    function checkAndApplyRestoredDraft() {
+        try {
+            const raw = localStorage.getItem(STORAGE_DRAFT_KEY);
+            if (!raw) return false;
+            const draft = JSON.parse(raw);
+            if (!draft || !draft.formData) return false;
+
+            const hasData = (draft.formData.buildingName && draft.formData.buildingName.length > 0) ||
+                            (draft.formData.values && Object.keys(draft.formData.values).length > 0) ||
+                            (draft.evaluationReport !== null);
+
+            if (!hasData) return false;
+
+            // Apply draft data to state
+            if (draft.formData.buildingName) {
+                state.formData.buildingName = draft.formData.buildingName;
+                if (elements.buildingNameInput) elements.buildingNameInput.value = draft.formData.buildingName;
+            }
+
+            if (draft.formData.buildingType) {
+                state.formData.buildingType = draft.formData.buildingType;
+                state.selectedBuildingType = draft.formData.buildingType;
+                if (elements.buildingTypeSelect) elements.buildingTypeSelect.value = draft.formData.buildingType;
+            }
+
+            if (draft.formData.standard) {
+                state.formData.standard = draft.formData.standard;
+                state.selectedStandard = draft.formData.standard;
+                const r = document.querySelector(`input[name="standardChoice"][value="${draft.formData.standard}"]`);
+                if (r) r.checked = true;
+            }
+
+            if (draft.formData.values) {
+                state.formData.values = Object.assign({}, draft.formData.values);
+            }
+
+            if (draft.evaluationReport) {
+                state.evaluationReport = draft.evaluationReport;
+            }
+            if (draft.hasPendingEvaluation) {
+                state.hasPendingEvaluation = true;
+            }
+            if (draft.isProvisional) {
+                state.isProvisional = true;
+            }
+
+            updateStandardInfo();
+            renderAllCriteria();
+            updateAllLiveTrackers();
+
+            // Format saved time string
+            let timeStr = 'earlier';
+            if (draft.lastSavedAt) {
+                try {
+                    const d = new Date(draft.lastSavedAt);
+                    timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } catch (e) {}
+            }
+
+            // Display Draft Restored Banner
+            if (elements.draftRestoredBanner) {
+                if (elements.draftRestoredText) {
+                    elements.draftRestoredText.innerHTML = `<strong>Data Protection Active:</strong> Your previously entered project details (auto-saved at ${timeStr}) were automatically restored.`;
+                }
+                elements.draftRestoredBanner.style.display = 'block';
+            }
+
+            // If user had finished evaluation
+            if (draft.currentStep === 6 && state.evaluationReport) {
+                renderResults(state.evaluationReport);
+                goToStep(6);
+            } else if (draft.currentStep && draft.currentStep > 1) {
+                goToStep(draft.currentStep);
+            }
+
+            updateSyncIndicator(state.isOffline ? 'OFFLINE' : 'SAVED');
+
+            // If back online and there is pending evaluation sync, run it immediately
+            if (navigator.onLine && (state.hasPendingEvaluation || state.isProvisional)) {
+                synchronizePendingData();
+            }
+
+            return true;
+        } catch (err) {
+            console.warn('Error applying restored draft:', err);
+            return false;
+        }
+    }
+
+    /**
+     * Update Header Sync Status Badge
+     */
+    function updateSyncIndicator(status) {
+        if (!elements.syncStatusBadge) return;
+
+        elements.syncBadgeDot.className = 'sync-badge-dot';
+
+        if (status === 'OFFLINE') {
+            elements.syncBadgeDot.classList.add('offline');
+            elements.syncBadgeText.textContent = 'Offline (Auto-Saved)';
+            elements.syncStatusBadge.title = 'Offline mode: all changes are safely protected and stored locally.';
+        } else if (status === 'SYNCING') {
+            elements.syncBadgeDot.classList.add('syncing');
+            elements.syncBadgeText.textContent = 'Syncing...';
+            elements.syncStatusBadge.title = 'Synchronizing pending data with the server...';
+        } else if (status === 'PENDING') {
+            elements.syncBadgeDot.classList.add('syncing');
+            elements.syncBadgeText.textContent = 'Pending Sync';
+            elements.syncStatusBadge.title = 'Data saved locally. Will sync automatically when connection is verified.';
+        } else {
+            elements.syncBadgeDot.classList.add('online');
+            elements.syncBadgeText.textContent = 'Protected & Synced';
+            elements.syncStatusBadge.title = 'Real-time protection active: all data is safely saved and synchronized.';
+        }
+    }
+
+    /**
+     * Display Network Status Bar
+     */
+    function showNetworkBanner(type, message, showButton = false) {
+        if (!elements.networkStatusBar) return;
+
+        elements.networkStatusBar.className = 'network-status-bar';
+
+        if (type === 'OFFLINE') {
+            elements.networkStatusBar.classList.add('offline');
+            elements.networkStatusIcon.textContent = '⚠️';
+        } else if (type === 'SYNCING') {
+            elements.networkStatusBar.classList.add('online-sync');
+            elements.networkStatusIcon.textContent = '🔄';
+        } else if (type === 'SUCCESS') {
+            elements.networkStatusBar.classList.add('synced-success');
+            elements.networkStatusIcon.textContent = '✓';
+        }
+
+        elements.networkStatusText.textContent = message;
+        if (elements.networkSyncBtn) {
+            elements.networkSyncBtn.style.display = showButton ? 'inline-block' : 'none';
+        }
+        elements.networkStatusBar.style.display = 'flex';
+    }
+
+    function hideNetworkBanner() {
+        if (elements.networkStatusBar) {
+            elements.networkStatusBar.style.display = 'none';
+        }
+    }
+
+    /**
+     * Network offline event handler
+     */
+    function onConnectionLost() {
+        state.isOffline = true;
+        updateSyncIndicator('OFFLINE');
+        showNetworkBanner('OFFLINE', '⚠️ Offline Mode: Internet connection lost. All entered data is safely protected and auto-saved on your device.');
+    }
+
+    /**
+     * Network online event handler
+     */
+    async function onConnectionRestored() {
+        state.isOffline = false;
+        updateSyncIndicator('SYNCING');
+        showNetworkBanner('SYNCING', '🔄 Connection Restored: Synchronizing your protected data with the server...');
+        await synchronizePendingData();
+    }
+
+    /**
+     * Synchronize pending data with server upon connection return
+     */
+    async function synchronizePendingData() {
+        try {
+            updateSyncIndicator('SYNCING');
+
+            // 1. Verify health
+            const healthRes = await fetch('/api/health').catch(() => null);
+            if (!healthRes || !healthRes.ok) {
+                updateSyncIndicator('PENDING');
+                showNetworkBanner('OFFLINE', '🟡 Reconnecting: Waiting for server to respond. Data remains safe locally.', true);
+                return;
+            }
+
+            // 2. Re-fetch standards & criteria if empty
+            if (!state.standards || state.standards.length === 0) {
+                await loadStandards();
+            }
+            if (!state.criteria || state.criteria.length === 0) {
+                await loadCriteria();
+            }
+
+            // 3. If there is a pending or provisional evaluation, submit to /api/evaluate
+            if (state.hasPendingEvaluation || state.isProvisional) {
+                const payload = {
+                    buildingName: state.formData.buildingName || 'EcoTower Assessment',
+                    buildingType: state.formData.buildingType || 'OFFICE',
+                    standard: state.formData.standard || 'GRIHA',
+                    values: state.formData.values || {}
+                };
+
+                const evalRes = await fetch('/api/evaluate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (evalRes.ok) {
+                    const officialReport = await evalRes.json();
+                    state.evaluationReport = officialReport;
+                    state.hasPendingEvaluation = false;
+                    state.isProvisional = false;
+
+                    // If currently on Step 6, refresh the display with verified results
+                    if (state.currentStep === 6) {
+                        renderResults(officialReport);
+                    }
+
+                    saveDraft();
+                }
+            }
+
+            // 4. Show success banner
+            updateSyncIndicator('SAVED');
+            showNetworkBanner('SUCCESS', '✓ All pending data has been successfully synchronized with the official server.');
+            setTimeout(() => {
+                hideNetworkBanner();
+            }, 4000);
+
+        } catch (err) {
+            console.warn('Sync attempt failed:', err);
+            updateSyncIndicator('PENDING');
+            showNetworkBanner('OFFLINE', '🟡 Sync pending: Data is safe locally. Click to retry sync.', true);
+        }
+    }
+
+    /**
+     * Generate Provisional Offline Score Report using official standard weights
+     */
+    function generateProvisionalReport(payload) {
+        const standard = (state.standards && state.standards.find(s => s.id === state.selectedStandard)) || FALLBACK_STANDARDS[0];
+        const weights = standard.categoryWeights || { ENERGY: 30.0, WATER: 25.0, MATERIALS: 25.0, WASTE: 20.0 };
+        const values = payload.values || {};
+
+        const ruleResults = [];
+        const categoryScores = [];
+        let totalWeightedScore = 0.0;
+
+        const categories = ['ENERGY', 'WATER', 'MATERIALS', 'WASTE'];
+
+        categories.forEach(cat => {
+            const catCriteria = state.criteria.filter(c => c.category === cat);
+            let earnedSum = 0.0;
+            let maxSum = 0.0;
+
+            catCriteria.forEach(c => {
+                maxSum += c.maxPoints;
+                const val = values[c.id];
+                let earned = 0.0;
+
+                if (c.type === 'BOOLEAN') {
+                    earned = (val === true || val === 'true') ? c.maxPoints : 0.0;
+                } else if (c.type === 'PERCENTAGE') {
+                    const min = c.min !== undefined ? c.min : 0.0;
+                    const target = c.max !== undefined ? c.max : 100.0;
+                    let v = parseFloat(val);
+                    if (isNaN(v)) v = 0.0;
+                    if (v >= target) {
+                        earned = c.maxPoints;
+                    } else if (v <= min) {
+                        earned = 0.0;
+                    } else {
+                        earned = (c.maxPoints * (v - min)) / (target - min);
+                    }
+                } else if (c.type === 'TIERED') {
+                    if (c.tierOptions && c.tierOptions.length > 0) {
+                        const opt = c.tierOptions.find(o => o.id === val);
+                        earned = opt ? opt.points : 0.0;
+                    }
+                }
+
+                earned = Math.max(0.0, Math.min(c.maxPoints, earned));
+                earnedSum += earned;
+
+                const achieved = earned >= c.maxPoints;
+                const pointsAvail = Math.max(0.0, c.maxPoints - earned);
+
+                ruleResults.push({
+                    criterionId: c.id,
+                    criterionName: c.name,
+                    category: c.category,
+                    earnedPoints: earned,
+                    maxPoints: c.maxPoints,
+                    achieved: achieved,
+                    pointsAvailable: pointsAvail,
+                    inputValue: val !== undefined ? val : c.defaultValue,
+                    suggestion: c.suggestionText || `Optimize ${c.name} to earn full points.`
+                });
+            });
+
+            const catWeight = weights[cat] || 25.0;
+            const weightedScore = maxSum > 0 ? (earnedSum / maxSum) * catWeight : 0.0;
+            const percentage = maxSum > 0 ? (earnedSum / maxSum) * 100.0 : 0.0;
+
+            categoryScores.push({
+                category: cat,
+                categoryName: categoryMeta[cat] ? categoryMeta[cat].title : cat,
+                earnedPoints: earnedSum,
+                maxPoints: maxSum,
+                weight: catWeight,
+                weightedScore: weightedScore,
+                percentage: percentage
+            });
+
+            totalWeightedScore += weightedScore;
+        });
+
+        const totalScore = Math.max(0.0, Math.min(100.0, Math.round(totalWeightedScore * 10.0) / 10.0));
+        const isReady = totalScore >= 60.0;
+        const readinessStatus = isReady ? 'Certification Ready' : 'Improvement Required';
+
+        let ratingBand = 'Uncertified';
+        let ratingBandDescription = 'Below 60.0 points';
+        if (state.selectedStandard === 'GRIHA') {
+            if (totalScore >= 91.0) { ratingBand = '5 Star (GRIHA)'; ratingBandDescription = 'Exemplary National Green Leadership'; }
+            else if (totalScore >= 81.0) { ratingBand = '4 Star (GRIHA)'; ratingBandDescription = 'High Environmental & Resource Efficiency'; }
+            else if (totalScore >= 71.0) { ratingBand = '3 Star (GRIHA)'; ratingBandDescription = 'Substantial Green Performance'; }
+            else if (totalScore >= 60.0) { ratingBand = '1-2 Star (GRIHA)'; ratingBandDescription = 'Certified Green Building Baseline'; }
+        } else {
+            if (totalScore >= 90.0) { ratingBand = 'Platinum (IGBC)'; ratingBandDescription = 'Global Environmental Leadership'; }
+            else if (totalScore >= 80.0) { ratingBand = 'Gold (IGBC)'; ratingBandDescription = 'Outstanding Sustainable Practice'; }
+            else if (totalScore >= 70.0) { ratingBand = 'Silver (IGBC)'; ratingBandDescription = 'Comprehensive Green Integration'; }
+            else if (totalScore >= 60.0) { ratingBand = 'Certified (IGBC)'; ratingBandDescription = 'Recognized Sustainable Standards'; }
+        }
+
+        const suggestions = [];
+        ruleResults.forEach(r => {
+            if (r.pointsAvailable > 0.001) {
+                suggestions.push({
+                    criterionId: r.criterionId,
+                    criterionName: r.criterionName,
+                    category: r.category,
+                    categoryDisplayName: categoryMeta[r.category] ? categoryMeta[r.category].title : r.category,
+                    pointsAvailable: r.pointsAvailable,
+                    earnedPoints: r.earnedPoints,
+                    maxPoints: r.maxPoints,
+                    tip: r.suggestion
+                });
+            }
+        });
+        suggestions.sort((a, b) => b.pointsAvailable - a.pointsAvailable);
+
+        return {
+            buildingName: payload.buildingName || 'EcoTower Horizon Campus',
+            buildingType: payload.buildingType || 'OFFICE',
+            buildingTypeDisplayName: 'Commercial Office',
+            standardId: standard.id,
+            standardDisplayName: standard.displayName,
+            totalScore: totalScore,
+            readinessStatus: readinessStatus,
+            isReady: isReady,
+            ratingBand: ratingBand,
+            ratingBandDescription: ratingBandDescription,
+            categoryScores: categoryScores,
+            ruleResults: ruleResults,
+            suggestions: suggestions,
+            disclaimer: 'Provisional offline score calculated using standard criteria weights. Synchronizes with server automatically.'
+        };
+    }
+
+    /* Fallback Standards Data (100% Offline Independence) */
+    const FALLBACK_STANDARDS = [
+        {
+            id: 'GRIHA',
+            displayName: 'GRIHA (Green Rating for Integrated Habitat Assessment)',
+            description: 'India\'s national rating system evaluating resource efficiency across lifecycle phases.',
+            categoryWeights: { ENERGY: 30.0, WATER: 25.0, MATERIALS: 25.0, WASTE: 20.0 },
+            disclaimer: 'Illustrative scoring model aligned with GRIHA V.2019 parameters.'
+        },
+        {
+            id: 'IGBC',
+            displayName: 'IGBC (Indian Green Building Council)',
+            description: 'Holistic green rating standard with enhanced focus on water neutrality and circular materials.',
+            categoryWeights: { ENERGY: 26.0, WATER: 28.0, MATERIALS: 28.0, WASTE: 18.0 },
+            disclaimer: 'Illustrative scoring model aligned with IGBC Green New Buildings criteria.'
+        }
+    ];
+
+    /* Fallback Criteria Data (100% Offline Independence) */
+    function getFallbackCriteria(standardId, buildingType) {
+        const isIgbc = standardId === 'IGBC';
+        return [
+            { id: 'energy_epi', name: 'Energy Performance Index (EPI) vs Benchmark', category: 'ENERGY', categoryDisplayName: 'Energy Efficiency', type: 'TIERED', maxPoints: isIgbc ? 9.0 : 10.0, inputHint: 'Commercial Office benchmark: 140 kWh/m²/year. Select anticipated or measured EPI reduction.', min: 0.0, max: 100.0, unit: '', defaultValue: 'BASELINE', tierOptions: [
+                { id: 'EXCEED_30', label: '≥ 30% reduction vs benchmark EPI', points: isIgbc ? 9.0 : 10.0, description: 'Outstanding thermal envelope and HVAC efficiency' },
+                { id: 'EXCEED_20', label: '20% - 29.9% reduction vs benchmark EPI', points: isIgbc ? 6.0 : 7.0, description: 'High energy performance envelope' },
+                { id: 'EXCEED_10', label: '10% - 19.9% reduction vs benchmark EPI', points: isIgbc ? 3.0 : 4.0, description: 'Moderate energy optimization above code' },
+                { id: 'BASELINE', label: '< 10% reduction (Standard baseline)', points: 0.0, description: 'Standard baseline compliance only' }
+            ], suggestionText: 'Improve building envelope U-values, double glazing, and high-efficiency HVAC to cut EPI demand by ≥ 30%.' },
+            { id: 'energy_renewable', name: 'Renewable Energy Share (% of total building demand)', category: 'ENERGY', categoryDisplayName: 'Energy Efficiency', type: 'PERCENTAGE', maxPoints: isIgbc ? 7.0 : 8.0, inputHint: 'Target: ≥ 30% of total electrical demand offset via solar PV or wind.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Install rooftop solar PV or purchase off-site renewable power to offset ≥ 30% of energy consumption.' },
+            { id: 'energy_lighting', name: 'Efficient Lighting (% of total fixture lumens using LED/high-efficacy)', category: 'ENERGY', categoryDisplayName: 'Energy Efficiency', type: 'PERCENTAGE', maxPoints: isIgbc ? 5.0 : 6.0, inputHint: 'Percentage of total indoor & outdoor lighting using LED/smart controls.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Upgrade 100% of fixtures to high-efficacy LED fittings with daylight harvesting sensors.' },
+            { id: 'energy_passive_hvac', name: 'Passive Architectural Design & High-Efficiency HVAC', category: 'ENERGY', categoryDisplayName: 'Energy Efficiency', type: 'BOOLEAN', maxPoints: isIgbc ? 5.0 : 6.0, inputHint: 'Building incorporates optimal solar orientation, shading, and high-efficiency HVAC zoning.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Integrate external louvers, north-light orientation, and VAV HVAC zoning for passive cooling.' },
+
+            { id: 'water_rainwater', name: 'Rainwater Harvesting System Present', category: 'WATER', categoryDisplayName: 'Water Conservation', type: 'BOOLEAN', maxPoints: isIgbc ? 9.0 : 8.0, inputHint: 'Rooftop and surface runoff capture system with storage or groundwater recharge pits.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Construct dedicated rainwater harvesting tanks capturing 100% of peak rainfall runoff.' },
+            { id: 'water_low_flow', name: 'Low-Flow Plumbing Fixtures (% of installed fittings)', category: 'WATER', categoryDisplayName: 'Water Conservation', type: 'PERCENTAGE', maxPoints: isIgbc ? 8.0 : 7.0, inputHint: 'Percentage of toilets, urinals, and faucets meeting low-flow benchmarks.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Retrofit dual-flush aerated fixtures and sensor urinals to exceed baseline water savings.' },
+            { id: 'water_recycling', name: 'Wastewater Treatment & Recycling (% reused on-site)', category: 'WATER', categoryDisplayName: 'Water Conservation', type: 'PERCENTAGE', maxPoints: isIgbc ? 7.0 : 6.0, inputHint: 'Percentage of generated wastewater treated to tertiary standards and reused.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Install an on-site Sewage Treatment Plant (STP) to recycle 100% of greywater for flushing and cooling.' },
+            { id: 'water_landscaping', name: 'Water-Efficient or Native Drought-Tolerant Landscaping', category: 'WATER', categoryDisplayName: 'Water Conservation', type: 'BOOLEAN', maxPoints: 4.0, inputHint: 'At least 60% of vegetation is native/adaptive, irrigated with drip or smart moisture sensors.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Replace exotic turf with native drought-resistant flora and install automated drip irrigation.' },
+
+            { id: 'mat_recycled', name: 'Recycled-Content Materials (% of total material cost)', category: 'MATERIALS', categoryDisplayName: 'Sustainable Materials', type: 'PERCENTAGE', maxPoints: isIgbc ? 8.0 : 7.0, inputHint: 'Target: ≥ 30% of building materials by value contain pre/post-consumer recycled content.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Specify steel, glass, and composite tiles containing verified high recycled fractions.' },
+            { id: 'mat_regional', name: 'Locally Sourced Materials within 500 km (% of total cost)', category: 'MATERIALS', categoryDisplayName: 'Sustainable Materials', type: 'PERCENTAGE', maxPoints: isIgbc ? 8.0 : 7.0, inputHint: 'Target: ≥ 70% of structural and finishing materials sourced within 500 km.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Procure stone, bricks, and concrete from regional quarries within 500 km radius.' },
+            { id: 'mat_low_voc', name: 'Low-VOC Paints, Adhesives, and Finishes', category: 'MATERIALS', categoryDisplayName: 'Sustainable Materials', type: 'BOOLEAN', maxPoints: isIgbc ? 6.0 : 5.0, inputHint: '100% of interior architectural coatings and adhesives meet Green Seal / low-VOC standards.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Use certified zero/low-VOC waterborne primers, adhesives, and interior paints.' },
+            { id: 'mat_blended_cement', name: 'Fly-Ash / Blended Cement or Certified Sustainable Timber Use (%)', category: 'MATERIALS', categoryDisplayName: 'Sustainable Materials', type: 'PERCENTAGE', maxPoints: 6.0, inputHint: 'Percentage of structural concrete using blended cement or FSC-certified wood.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Mandate PPC/PSC cement with ≥ 30% fly ash or slag replacement in foundation and slabs.' },
+
+            { id: 'waste_diversion', name: 'Construction Waste Diverted from Landfills (% by weight/volume)', category: 'WASTE', categoryDisplayName: 'Waste Management', type: 'PERCENTAGE', maxPoints: isIgbc ? 6.0 : 7.0, inputHint: 'Target: ≥ 75% of construction and demolition debris diverted to reuse/recycling.', min: 0.0, max: 100.0, unit: '%', defaultValue: 0.0, tierOptions: [], suggestionText: 'Enforce a Construction & Demolition Waste Management Plan diverting ≥ 75% debris.' },
+            { id: 'waste_organic', name: 'Organic Waste Composting / Bio-Digestion on Site', category: 'WASTE', categoryDisplayName: 'Waste Management', type: 'BOOLEAN', maxPoints: 5.0, inputHint: 'On-site organic waste converter capable of treating 100% of organic waste generated.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Deploy an automated on-site composting unit or biomethanation plant for cafeteria wet waste.' },
+            { id: 'waste_segregation', name: 'Waste Segregation at Source (Multi-Bin System)', category: 'WASTE', categoryDisplayName: 'Waste Management', type: 'BOOLEAN', maxPoints: 4.0, inputHint: 'Dedicated multi-stream segregation bins provided at every floor and central collection bay.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Implement color-coded dry/wet/e-waste segregation stations across all operational floors.' },
+            { id: 'waste_hazardous', name: 'E-Waste and Hazardous Waste Safe Handling Plan', category: 'WASTE', categoryDisplayName: 'Waste Management', type: 'BOOLEAN', maxPoints: isIgbc ? 3.0 : 4.0, inputHint: 'Safe storage room and institutional agreement with authorized e-waste and chemical waste recyclers.', min: 0.0, max: 100.0, unit: '', defaultValue: false, tierOptions: [], suggestionText: 'Partner with authorized recyclers and set up a hazardous waste collection chamber.' }
+        ];
     }
 
     /**

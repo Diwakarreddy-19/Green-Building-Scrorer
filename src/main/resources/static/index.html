@@ -24,6 +24,10 @@
                 </div>
             </div>
             <div class="header-actions">
+                <div class="sync-badge" id="syncStatusBadge" title="Automatic Real-time Data Protection Status">
+                    <span class="sync-badge-dot online" id="syncBadgeDot"></span>
+                    <span class="sync-badge-text" id="syncBadgeText">Protected & Saved</span>
+                </div>
                 <button type="button" class="btn btn-outline" id="loadSampleBtn" title="Pre-fill with compliant sample building data">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -40,6 +44,17 @@
             </div>
         </div>
     </header>
+
+    <!-- Real-time Network Status & Sync Notification Bar -->
+    <div id="networkStatusBar" class="network-status-bar" style="display: none;" role="status" aria-live="polite">
+        <div class="network-status-content">
+            <div class="network-status-left">
+                <span class="network-status-icon" id="networkStatusIcon">⚠️</span>
+                <span class="network-status-text" id="networkStatusText">Offline Mode: Internet connection lost. All entered data is safely protected and auto-saved on your device.</span>
+            </div>
+            <button type="button" class="network-status-btn" id="networkSyncBtn" style="display: none;">Sync Now</button>
+        </div>
+    </div>
 
     <!-- Main Container -->
     <main class="main-container">
@@ -79,6 +94,17 @@
 
         <!-- Form Step Card -->
         <div class="wizard-card">
+
+            <!-- Draft Restored Banner -->
+            <div id="draftRestoredBanner" class="alert alert-info" style="display: none;" role="status">
+                <div class="draft-banner-content">
+                    <div class="draft-banner-text">
+                        <span class="draft-icon">🛡️</span>
+                        <span id="draftRestoredText"><strong>Auto-Recovery Active:</strong> Your previously entered project details have been safely restored.</span>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-ghost" id="discardDraftBtn" title="Clear saved draft and start fresh">Start Fresh</button>
+                </div>
+            </div>
 
             <!-- Step Error Banner -->
             <div id="stepErrorBanner" class="alert alert-error" style="display: none;"></div>
@@ -273,6 +299,7 @@
                         <div class="readiness-desc" id="readinessDesc">The building satisfies the minimum certification threshold of 60.0 points.</div>
                     </div>
                     <div class="rating-band-tag" id="ratingBandTag">5 Star (GRIHA)</div>
+                    <span class="provisional-badge" id="provisionalBadge" style="display: none;">⚠️ Offline Provisional Score</span>
                 </div>
 
                 <!-- Top Score Overview Grid -->
